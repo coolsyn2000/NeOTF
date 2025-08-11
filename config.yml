@@ -1,0 +1,55 @@
+experiment_name: "w_letter_siren"
+output_dir: "./outputs"
+
+data:
+  path: "./num_mask"
+  format: "tif"
+  ori_size: 2048
+  crop_size: 1024
+  desired_size: 512
+  blur_kernel_size: 21
+  sigma: 3.0
+  supp_size_w: 60
+  supp_size_h: 40
+
+# data:
+#   path: "./num_mask_white"
+#   format: "bmp"
+#   ori_size: 3672
+#   crop_size: 2048
+#   desired_size: 1024
+#   blur_kernel_size: 31
+#   sigma: 3.0
+#   supp_size_w: 65
+#   supp_size_h: 65
+
+model:
+  type: "SIREN"
+  in_features: 2
+  hidden_layers: 2
+  hidden_features: 128
+  out_features: 1
+  first_omega_0: 30
+  hidden_omega_0: 30
+  outermost_linear: True
+  num_frequencies: 8
+
+
+training:
+  random_seed: false
+  seed: 2886
+  device: "cuda"  # or "cpu"
+  epochs: 5000
+  optimizer: "Adam"  # or "SGD"
+  lr: !!float 1e-5
+  loss: "L1"  # or "MSE"
+  center_sample: true
+  center_sample_radius: 0.5
+  random_sample: false
+  random_sample_ratio: 0.1
+
+  tv_regularization: false
+  tv_weight: !!float 1e-4
+
+  num_frames: 4
+
