@@ -13,24 +13,17 @@ class SIREN(nn.Module):
 
 
 def fourier_encode(coords, in_features, num_frequencies):
-    """
-    对输入坐标进行傅里叶编码
-    :param coords: 输入坐标，形状为 (batch_size, num_points, 2)
-    :param num_frequencies: 傅里叶频率的数量
-    :return: 编码后的坐标，形状为 (batch_size, num_points, 2 * num_frequencies)
-    """
     num_points, _ = coords.shape
     encoded = []
 
     for freq in range(num_frequencies):
-        frequency = 2 ** freq  # 使用 2 的幂作为频率
-        encoded.append(torch.sin(frequency * coords[..., 0]))  # 正弦
+        frequency = 2 ** freq
+        encoded.append(torch.sin(frequency * coords[..., 0]))
         encoded.append(torch.cos(frequency * coords[..., 0]))
-        encoded.append(torch.sin(frequency * coords[..., 1]))  # 正弦
+        encoded.append(torch.sin(frequency * coords[..., 1]))
         encoded.append(torch.cos(frequency * coords[..., 1]))
-        # 余弦
 
-    return torch.stack(encoded, dim=-1).reshape(num_points, -1)  # 在最后一个维度拼接
+    return torch.stack(encoded, dim=-1).reshape(num_points, -1)
 
 
 class SineLayer(nn.Module):
@@ -109,9 +102,8 @@ if __name__ == "__main__":
 
     macs, params = profile(model, inputs=(coords,))
 
-    # 3. 使用clever_format进行格式化输出
-    # thop算出的macs，乘以2得到GFLOPs
+
     gflops = macs * 2
     print(f"MACs: {macs}, Params: {params}, GFLOPs: {gflops / 1e9}")
-    print(output.shape)  # 应该输出 torch.Size([100, 1])
-    print(coords_out.shape)  # 应该输出 torch.Size([100, 2])
+    print(output.shape)
+    print(coords_out.shape)

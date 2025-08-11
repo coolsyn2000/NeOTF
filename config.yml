@@ -1,4 +1,4 @@
-experiment_name: "w_letter_siren"
+experiment_name: "num_mask_siren"
 output_dir: "./outputs"
 
 data:
