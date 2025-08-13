@@ -1,5 +1,15 @@
-experiment_name: "num_mask_siren"
+experiment_name: "simu_cifar10_siren"
 output_dir: "./outputs"
+
+simu_data:
+  source_img: "./cifar10"
+  speckle_format: "png"
+  source_size: 32
+  speckle_size: 256
+  seed: 3047
+  pupil_radius: 0.5
+  supp_size_w: 32
+  supp_size_h: 32
 
 data:
   path: "./num_mask"
@@ -11,17 +21,6 @@ data:
   sigma: 3.0
   supp_size_w: 60
   supp_size_h: 40
-
-# data:
-#   path: "./num_mask_white"
-#   format: "bmp"
-#   ori_size: 3672
-#   crop_size: 2048
-#   desired_size: 1024
-#   blur_kernel_size: 31
-#   sigma: 3.0
-#   supp_size_w: 65
-#   supp_size_h: 65
 
 model:
   type: "SIREN"
@@ -36,14 +35,14 @@ model:
 
 
 training:
-  random_seed: false
-  seed: 2886
+  random_seed: true
+  seed: 5067
   device: "cuda"  # or "cpu"
   epochs: 5000
   optimizer: "Adam"  # or "SGD"
-  lr: !!float 1e-5
+  lr: !!float 1e-4
   loss: "L1"  # or "MSE"
-  center_sample: true
+  center_sample: false
   center_sample_radius: 0.5
   random_sample: false
   random_sample_ratio: 0.1
@@ -51,5 +50,4 @@ training:
   tv_regularization: false
   tv_weight: !!float 1e-4
 
-  num_frames: 4
-
+  num_frames: 5

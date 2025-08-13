@@ -1,18 +1,22 @@
 import os
 import matplotlib.pyplot as plt
+import numpy
 
 import numpy as np
 import torch
-
 from SIREN import Siren
-from utils import read_speckles_from_folder,crop_center,get_mgrid,pad_to_size,total_variation_loss, set_seed,get_circular_mgrid
-from utils import Config, load_config
-import argparse
 from PIL import Image
-import shutil
+import glob
+import argparse
+from utils import read_speckles_from_folder, crop_center, get_mgrid, pad_to_size, total_variation_loss, set_seed, get_circular_mgrid
+from utils import Config, load_config
+from utils import scattering_speckle, crop_center, get_mgrid
 import random
+import shutil
 from tqdm import tqdm
+
 def test(config,config_path):
+
     if config.training.random_seed:
         seed = random.randint(0, 10000)
         print(f"Using random seed: {seed}")
@@ -30,12 +34,13 @@ def test(config,config_path):
     except Exception as e:
         print(f"Error copying config file: {e}")
 
-    size = config.data.desired_size
-
+    size= config.simu_data.speckle_size
     tensor = torch.zeros(size, size)
+    num_frames = config.training.num_frames
+    num_epochs = config.training.epochs
 
-    supp_size_w =config.data.supp_size_w
-    supp_size_h =config.data.supp_size_h
+    supp_size_w = config.simu_data.supp_size_w
+    supp_size_h = config.simu_data.supp_size_h
 
     start_index_w = (size - supp_size_w) // 2
     end_index_w = start_index_w + supp_size_w
@@ -44,30 +49,35 @@ def test(config,config_path):
     end_index_h = start_index_h + supp_size_h
 
     tensor[start_index_h:end_index_h, start_index_w:end_index_w] = 1
-    tensor = tensor.unsqueeze(0).unsqueeze(0)
+    tensor = tensor.unsqueeze(0)
+    tensor = tensor.unsqueeze(0)
+    np.random.seed(config.simu_data.seed)
+    random_phase = np.random.rand(size, size) * 2 * np.pi
 
-    _, speckle_torch_list, = read_speckles_from_folder(config.data.path, config.data)
+    speckle_array_list = []
+    speckle_torch_list = []
+    img_path_list = glob.glob('./cifar10/*.png')
+    for i in range(len(img_path_list)):
+        img, psf, _, _ = scattering_speckle(img_path_list[i], random_phase, config.simu_data)
+        speckle_array_list.append(img)
+        speckle_torch_list.append(torch.from_numpy(img))
+
+    otf_pha = np.angle(np.fft.fftshift(np.fft.fft2(psf)))
+    otf_ftm = np.abs(np.fft.fftshift(np.fft.fft2(psf)))
 
     device = config.training.device
 
     speckle_torch_list = [tensor.to(device) for tensor in speckle_torch_list]
 
     speckle_ft = [torch.abs(torch.fft.fftshift(torch.fft.fft2(tensor))) for tensor in speckle_torch_list]
-    for i in range(len(speckle_ft)):
-        speckle_ft[i][0,0,0,0]= speckle_ft[i][0,0,1,1]
-
+    
     if config.training.center_sample:
         coords, mask = get_circular_mgrid(size,config.training.center_sample_radius)
     else:
         coords = get_mgrid(size, 2).to(device)
 
-
-    coords = coords.to(device)
-
     speckle_pha = [torch.angle(torch.fft.fftshift(torch.fft.fft2(tensor))) for tensor in speckle_torch_list]
     tensor = tensor.to(device)
-    num_epochs = config.training.epochs
-    num_frames = config.training.num_frames
 
     if config.model.type == 'SIREN':
         model = Siren(in_features=config.model.in_features,
@@ -80,7 +90,6 @@ def test(config,config_path):
                       num_frequencies=config.model.num_frequencies).to(device)
     else:
         raise ValueError(f"Unsupported model type: {config.model.type}")
-    
 
     if config.training.optimizer == 'Adam':
         optimizer = torch.optim.Adam(model.parameters(), lr=config.training.lr)
@@ -98,7 +107,9 @@ def test(config,config_path):
     criterion = torch.nn.L1Loss()
     losses = []
 
-    
+    import matplotlib as mpl
+    mpl.rcParams['font.size'] = 30
+    from pathlib import Path
 
     epoch_pbar = tqdm(range(num_epochs), desc=f"Training Epochs", unit="epoch")
     # The main loop now iterates over the tqdm object
@@ -150,43 +161,76 @@ def test(config,config_path):
     # The loop is finished, the progress bar will automatically close.
     print("\nTraining finished!")
 
-    import matplotlib as mpl
-    mpl.rcParams['font.size'] = 30
-    from pathlib import Path
 
-
+    # for results evaluation
     np.save(os.path.join(experiment_path, 'loss.npy'), losses)
     model.eval()
-    out, coords_out = model(coords)
-    if config.training.center_sample:
-        phase_map = torch.zeros(size*size).to(device)
-        phase_map[mask]=out.view(-1)
-        outputs = phase_map.view(size, size)
-    else:
-        outputs = out.view(size, size)
-    
-    # outputs = outputs.view(sample_size, sample_size)
-    # if sample_size < sidelen:
-    #     outputs = pad_to_size(outputs, sidelen, sidelen, mode='constant', value=0.0)
 
-
+    outputs, _ = model(coords)
+    outputs = outputs.view(size, size)
     for i in range(len(speckle_torch_list)):
         obj_pha = speckle_pha[i] - outputs
         obj = torch.real(torch.fft.ifft2(torch.fft.ifftshift((speckle_ft[i] * torch.exp(1j * obj_pha)))))
         obj[obj<0]=0
         outputs_show = obj.squeeze()
         recons = outputs_show.cpu().detach().numpy()
-        recons = crop_center(recons,100)
+        recons = crop_center(recons,supp_size_h)
         recons = (recons - np.min(recons)) / (np.max(recons) - np.min(recons)) * 255.0
         recons = Image.fromarray(recons.astype(np.uint8))
-        recons.save(os.path.join(experiment_path, '%d.png' % i))
+        recons.save(os.path.join(experiment_path, '%d.png' % (i)))
 
-    outputs = outputs.cpu().detach().numpy()
+    for i in range(len(speckle_torch_list)):
+        obj_pha = speckle_pha[i] - torch.from_numpy(otf_pha).to(device)
+        obj = torch.real(torch.fft.ifft2(torch.fft.ifftshift((speckle_ft[i] * torch.exp(1j * obj_pha)))))
+        obj[obj<0]=0
+        outputs_show = obj.squeeze()
+        recons = outputs_show.cpu().detach().numpy()
+        recons = crop_center(recons,supp_size_h)
+        recons = (recons - np.min(recons)) / (np.max(recons) - np.min(recons)) * 255.0
+        recons = Image.fromarray(recons.astype(np.uint8))
+        recons.save(os.path.join(experiment_path, 'GT_%d.png' % (i)))
 
-    plt.imshow(outputs,cmap='twilight')
-    plt.colorbar()
-    plt.savefig(os.path.join(experiment_path, 'otf_pha.png'))
+    # ploting phase map and residual
+    fig, ax = plt.subplots(1, 4, figsize=(35, 6)) 
+    est_pha_for_plot = outputs.squeeze().cpu().detach().numpy()
+    im0 = ax[0].imshow(est_pha_for_plot)
+    otf_pha_for_plot = otf_pha
+    im1 = ax[1].imshow(otf_pha_for_plot)
+    pha_residual = np.abs(otf_pha_for_plot - est_pha_for_plot)
+    pha_residual[pha_residual > np.pi] = 2 * np.pi - pha_residual[pha_residual > np.pi]
+    im2 = ax[2].imshow(pha_residual)
+    im3 = ax[3].imshow(np.log(otf_ftm))
+    ax[0].axis('off')
+    ax[1].axis('off')
+    ax[2].axis('off')
+    ax[3].axis('off')
+    fig.colorbar(im0, ax=ax[0])
+    fig.colorbar(im1, ax=ax[1])
+    fig.colorbar(im2, ax=ax[2])
+    fig.colorbar(im3, ax=ax[3])
+    plt.tight_layout()
+    plt.savefig(os.path.join(experiment_path, './simu_OTF_INR_PhaseMap.png'), transparent=True)
     plt.close()
+    # plt.show()
+
+    plt.tight_layout()
+    plt.plot(losses, label='Loss', color='blue')
+    plt.title('Training Loss Over Epochs')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.savefig(os.path.join(experiment_path, './loss.png'), transparent=True)
+    plt.close()
+    # plt.show()
+
+    psf = Image.fromarray((psf*255.0).astype(np.uint8))
+    psf.save(os.path.join(experiment_path, 'real_psf.png'))
+
+    est_pha = outputs.squeeze().cpu().detach().numpy()
+    psf_est = np.abs(np.fft.ifft2(np.fft.fftshift(otf_ftm*np.exp(1j*est_pha))))
+    psf_est = (psf_est-np.min(psf_est))/(np.max(psf_est)-np.min(psf_est))
+    psf_est = Image.fromarray((psf_est*255.0).astype(np.uint8))
+    psf_est.save(os.path.join(experiment_path, 'est_psf.png'))
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train a model using a YAML config file.")
@@ -194,6 +238,6 @@ if __name__ == "__main__":
                         help='Path to the YAML configuration file.')
     args = parser.parse_args()
 
-    # 加载配置
     config = load_config(args.config)
     test(config, args.config)
+
